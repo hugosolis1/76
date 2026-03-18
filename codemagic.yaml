@@ -1,0 +1,112 @@
+workflows:
+  ios-unsigned:
+    name: GannMT5 Pro – iOS Unsigned IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      xcode: latest
+
+    scripts:
+
+      # ── 1. Assets ────────────────────────────────────────────────
+      - name: Create Assets
+        script: |
+          set -e
+          mkdir -p Assets.xcassets/AppIcon.appiconset
+          mkdir -p Assets.xcassets/AccentColor.colorset
+
+          cat > Assets.xcassets/AppIcon.appiconset/Contents.json << 'EOF'
+          {
+            "images": [],
+            "info": { "author": "xcode", "version": 1 }
+          }
+          EOF
+
+          cat > Assets.xcassets/AccentColor.colorset/Contents.json << 'EOF'
+          {
+            "colors": [{
+              "color": {
+                "color-space": "srgb",
+                "components": { "alpha": "1.000", "blue": "0.557", "green": "0.514", "red": "0.941" }
+              },
+              "idiom": "universal"
+            }],
+            "info": { "author": "xcode", "version": 1 }
+          }
+          EOF
+
+          cat > Assets.xcassets/Contents.json << 'EOF'
+          { "info": { "author": "xcode", "version": 1 } }
+          EOF
+
+          echo "✅ Assets creados"
+
+      # ── 2. XcodeGen ──────────────────────────────────────────────
+      - name: Install XcodeGen
+        script: |
+          set -e
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+          echo "✅ XcodeGen $(xcodegen --version)"
+
+      # ── 3. Generar proyecto Xcode ─────────────────────────────────
+      - name: Generate Xcode Project
+        script: |
+          set -e
+          xcodegen generate --spec project.yml
+          echo "✅ Proyecto generado:"
+          find . -maxdepth 2 -name "*.xcodeproj" -type d
+
+      # ── 4. Build Archive sin firma ───────────────────────────────
+      - name: Build Archive
+        script: |
+          set -e
+          XCODEPROJ=$(find . -maxdepth 2 -name "*.xcodeproj" -type d | head -1)
+          SCHEME=$(basename "$XCODEPROJ" .xcodeproj)
+          echo "📦 Proyecto: $XCODEPROJ | Scheme: $SCHEME"
+
+          xcodebuild archive \
+            -project "$XCODEPROJ" \
+            -scheme   "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$CM_BUILD_DIR/GannMT5Pro.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            ASSETCATALOG_COMPILER_APPICON_NAME="" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            SKIP_INSTALL=NO \
+            | xcpretty || true
+
+          # Buscar el xcarchive (puede estar en subdirectorio)
+          ARCHIVE=$(find "$CM_BUILD_DIR" -name "*.xcarchive" -type d | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "❌ xcarchive no encontrado en $CM_BUILD_DIR"
+            find "$CM_BUILD_DIR" -maxdepth 3 -type d | head -20
+            exit 1
+          fi
+          echo "✅ Archive creado: $ARCHIVE"
+
+      # ── 5. Empaquetar IPA ────────────────────────────────────────
+      - name: Package IPA
+        script: |
+          set -e
+          ARCHIVE=$(find "$CM_BUILD_DIR" -name "*.xcarchive" -type d | head -1)
+          APP=$(find "$ARCHIVE" -name "*.app" -type d | head -1)
+          echo "📱 App: $APP"
+
+          mkdir -p "$CM_BUILD_DIR/Payload"
+          cp -R "$APP" "$CM_BUILD_DIR/Payload/"
+
+          cd "$CM_BUILD_DIR"
+          zip -r "GannMT5Pro_unsigned.ipa" Payload/
+          ls -lh GannMT5Pro_unsigned.ipa
+          echo "✅ IPA creado: $CM_BUILD_DIR/GannMT5Pro_unsigned.ipa"
+
+    artifacts:
+      - $CM_BUILD_DIR/GannMT5Pro_unsigned.ipa
+      - $CM_BUILD_DIR/**/*.dSYM
